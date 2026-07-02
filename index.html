@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Akıllı Kart Tanımlayıcı</title>
+    <title>Kararlı Kart Algılayıcı</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -12,18 +12,16 @@
             text-align: center;
             margin: 0;
             padding: 10px;
-            overflow-x: hidden; 
         }
         .container {
             width: 100%;
             max-width: 500px;
             margin: auto;
-            background: rgba(0, 0, 0, 0.7);
+            background: rgba(0, 0, 0, 0.8);
             padding: 15px;
             border-radius: 12px;
             box-sizing: border-box;
         }
-        h1 { font-size: 1.3rem; margin-top: 5px; }
         .video-container {
             position: relative;
             width: 100%;
@@ -39,48 +37,41 @@
             object-fit: cover;
         }
         #canvasOutput { z-index: 2; }
-        .dashboard {
+        .counter-box {
             margin-top: 15px;
+            font-size: 1.2rem;
             background: #222;
-            padding: 12px;
+            padding: 10px;
             border-radius: 8px;
-            display: flex;
-            justify-content: space-around;
         }
-        .stat { font-size: 1rem; }
-        .stat span { display: block; font-size: 1.5rem; font-weight: bold; color: #ffcc00; }
+        #cardCount { color: #00ff00; font-size: 1.8rem; font-weight: bold; }
         .hand-list {
             margin-top: 12px;
             background: #333;
             padding: 10px;
             border-radius: 8px;
             font-size: 1.1rem;
-            letter-spacing: 1px;
         }
     </style>
-    <!-- Çok hafif ve anında yüklenen renk/nesne takip kütüphanesi -->
-    <script src="https://cloudflare.com"></script>
 </head>
 <body>
 
 <div class="container">
-    <h1>♠️ ♥️ Canlı Kart Tanımlayıcı ♦️ ♣️</h1>
+    <h1>♠️ ♥️ Donanımsal Kart Dedektörü ♦️ ♣️</h1>
+    <p id="status" style="color: #ffcc00;">Sistem Başlatılıyor...</p>
 
     <div class="video-container">
-        <video id="videoInput" preload autoplay playsinline muted></video>
+        <video id="videoInput" autoplay playsinline muted></video>
         <canvas id="canvasOutput"></canvas>
     </div>
 
-    <div class="dashboard">
-        <div class="stat">
-            Kart Sayısı
-            <span id="cardCount">0</span>
-        </div>
+    <div class="counter-box">
+        Algılanan Kart Sayısı: <span id="cardCount">0</span>
     </div>
 
     <div class="hand-list">
-        <strong>Okunan Kartlar:</strong> <br>
-        <span id="detectedHand" style="color: #00ff00;">Kart Aranıyor...</span>
+        <strong>Mevcut El:</strong> <br>
+        <span id="detectedHand" style="color: #00ff00;">Kart Okutulması Bekleniyor...</span>
     </div>
 </div>
 
@@ -88,105 +79,83 @@
 const video = document.getElementById('videoInput');
 const canvas = document.getElementById('canvasOutput');
 const ctx = canvas.getContext('2d');
-
-// Briç Kart Tanımlama Parametreleri
-const RANKS = ['A', 'K', 'Q', 'J', '10', '9', '8', '7'];
-const SUITS = ['♥️ Kupa', '♦️ Karo', '♠️ Maça', '♣️ Sinek'];
+let barcodeDetector;
+let detectedCardsMap = new Map(); // Kartları ve son görülme zamanlarını tutar
 
 window.onload = function() {
-    startCamera();
+    // Tarayıcının yerleşik barkod/QR okuma motoru var mı kontrol et
+    if ('BarcodeDetector' in window) {
+        barcodeDetector = new BarcodeDetector({ formats: ['qr_code', 'code_128', 'ean_13'] });
+        startCamera();
+    } else {
+        document.getElementById('status').innerText = "Hata: Tarayıcınız donanımsal yapay zekayı desteklemiyor. Lütfen Chrome veya Safari'yi güncelleyin.";
+        document.getElementById('status').style.color = "#ff4444";
+    }
 };
 
 function startCamera() {
-    const constraints = {
-        video: { facingMode: "environment", width: 640, height: 480 },
-        audio: false
-    };
-
-    navigator.mediaDevices.getUserMedia(constraints)
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: 640, height: 480 }, audio: false })
         .then(function(stream) {
             video.srcObject = stream;
             video.play();
-            
             video.onloadedmetadata = function() {
                 canvas.width = video.videoWidth;
                 canvas.height = video.videoHeight;
-                initCardTracker();
+                document.getElementById('status').innerText = "Sistem Aktif: Kart Kodlarını Taratın";
+                document.getElementById('status').style.color = "#00ff00";
+                tick();
             };
         })
         .catch(function(err) {
-            document.getElementById('detectedHand').innerText = "Kamera erişim hatası!";
+            document.getElementById('status').innerText = "Kamera erişim izni reddedildi.";
         });
 }
 
-function initCardTracker() {
-    // Özel renk algılayıcıları tanımlıyoruz (Kartların kırmızı ve siyah serileri için)
-    tracking.ColorTracker.registerColor('red_suit', function(r, g, b) {
-        return (r > 150 && g < 60 && b < 60); // Canlı kırmızı renk filtresi
-    });
+function tick() {
+    if (video.paused || video.ended) return;
 
-    tracking.ColorTracker.registerColor('black_suit', function(r, g, b) {
-        return (r < 60 && g < 60 && b < 60); // Net siyah renk filtresi
-    });
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    const tracker = new tracking.ColorTracker(['red_suit', 'black_suit']);
-    tracker.setMinDimension(15); // Çok küçük gürültüleri göz ardı et
+    // Telefonun kendi işlemcisini kullanarak görüntüyü tara (Sıfır kasma)
+    barcodeDetector.detect(canvas)
+        .then(barcodes => {
+            const now = Date.now();
 
-    tracking.track('#videoInput', tracker);
+            barcodes.forEach(barcode => {
+                // Okunan QR/Barkod değerini el listesine ekle (Örn: "Kupa As", "Sinek 10")
+                detectedCardsMap.set(barcode.rawValue, now);
 
-    tracker.on('track', function(event) {
-        // Her karede canvası temizle ve kamerayı üzerine çiz
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        
-        if (event.data.length === 0) {
-            document.getElementById('cardCount').innerText = "0";
-            document.getElementById('detectedHand').innerText = "Kart bekleniyor...";
-            return;
-        }
-
-        let activeHand = [];
-        let cardSet = new Set(); // Aynı kartın mükerrer okunmasını önler
-
-        event.data.forEach(function(rect) {
-            // Sadece belirli geometrik oranlara sahip alanları (kart simgesi/rakamı) filtrele
-            if (rect.width > 10 && rect.height > 10) {
+                // Ekranda kartın üzerine yeşil çerçeve çiz
+                const bounding = barcode.boundingBox;
+                ctx.strokeStyle = '#00ff00';
+                ctx.lineWidth = 4;
+                ctx.strokeRect(bounding.x, bounding.y, bounding.width, bounding.height);
                 
-                // Algılanan rengin türüne göre seri ata
-                let suit = (rect.color === 'red_suit') ? 
-                    SUITS[Math.abs(rect.x) % 2] : // Kupa veya Karo
-                    SUITS[2 + (Math.abs(rect.x) % 2)]; // Maça veya Sinek
-                
-                // Koordinat geometrisine göre istikrarlı bir kart değeri eşle (Demo stabilizasyon)
-                let rankIndex = Math.abs(rect.x + rect.y) % RANKS.length;
-                let rank = RANKS[rankIndex];
-                
-                let cardName = rank + " " + suit;
-                
-                if (!cardSet.has(cardName)) {
-                    cardSet.add(cardName);
-                    activeHand.push(cardName);
-                    
-                    // Ekranda kartın işaretinin olduğu yere yeşil kare çiz
-                    ctx.strokeStyle = '#00ff00';
-                    ctx.lineWidth = 3;
-                    ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
-                    
-                    // Çerçevenin üzerine kartın adını yaz
-                    ctx.fillStyle = '#00ff00';
-                    ctx.font = '14px Arial';
-                    ctx.fillText(rank, rect.x, rect.y - 5);
+                ctx.fillStyle = '#00ff00';
+                ctx.font = 'bold 16px Arial';
+                ctx.fillText(barcode.rawValue, bounding.x, bounding.y - 10);
+            });
+
+            // 3 saniye boyunca kamerada görünmeyen kartları listeden temizle (Dinamik güncelleme)
+            for (let [card, lastSeen] of detectedCardsMap.entries()) {
+                if (now - lastSeen > 3000) {
+                    detectedCardsMap.delete(card);
                 }
             }
+
+            // Arayüzü güncelle
+            document.getElementById('cardCount').innerText = detectedCardsMap.size;
+            if (detectedCardsMap.size > 0) {
+                document.getElementById('detectedHand').innerHTML = Array.from(detectedCardsMap.keys()).join('<br>');
+            } else {
+                document.getElementById('detectedHand').innerText = "Kart Okutulması Bekleniyor...";
+            }
+        })
+        .catch(err => {
+            console.error("Tarama hatası:", err);
         });
 
-        // UI Güncelleme
-        const totalDetected = cardSet.size;
-        document.getElementById('cardCount').innerText = totalDetected;
-        
-        if(activeHand.length > 0) {
-            document.getElementById('detectedHand').innerHTML = activeHand.join('<br>');
-        }
-    });
+    requestAnimationFrame(tick);
 }
 </script>
 </body>
