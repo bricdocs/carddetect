@@ -140,8 +140,12 @@ function startCamera() {
 function processVideo() {
     if (!video.srcObject) return;
 
-    let src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
-    let dst = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+    // Kamera boyutlarını dinamik al
+    let width = video.videoWidth || 640;
+    let height = video.videoHeight || 480;
+
+    let src = new cv.Mat(height, width, cv.CV_8UC4);
+    let dst = new cv.Mat(height, width, cv.CV_8UC4);
     let gray = new cv.Mat();
     let blurred = new cv.Mat();
     let thresh = new cv.Mat();
@@ -149,7 +153,7 @@ function processVideo() {
     let hierarchy = new cv.Mat();
     
     let cap = new cv.VideoCapture(video);
-    const FPS = 24; // Mobil işlemciyi yormamak ve bataryayı korumak için ideal FPS
+    const FPS = 30;
 
     function processFrame() {
         try {
@@ -158,12 +162,16 @@ function processVideo() {
             cap.read(src);
             src.copyTo(dst);
             
+            // 1. Gri tona çevir
             cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+            
+            // 2. Yumuşat (Gürültüyü ve el titremesini azaltır)
             cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
             
-            // Mobil ortamdaki değişken ışıklar için dinamik eşikleme (Otsu) veya sabit değer
-            cv.threshold(blurred, thresh, 110, 255, cv.THRESH_BINARY);
+            // 3. DİNAMİK EŞİKLEME (Işık değişimlerinden etkilenmez, kartı masadan hemen ayırır)
+            cv.adaptiveThreshold(blurred, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
             
+            // 4. Kenarları bul
             cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
             
             let detectedCount = 0;
@@ -175,15 +183,16 @@ function processVideo() {
                 let approx = new cv.Mat();
                 cv.approxPolyDP(cnt, approx, 0.04 * perimeter, true);
                 
-                // Mobil ekranda kartların mesafesine göre alan sınırları optimize edildi
-                if (approx.rows === 4 && area > 2000 && area < 80000) {
+                // 4 köşeli olan ve belirli bir büyüklükteki nesneleri kart kabul et (Değerler esnetildi)
+                if (approx.rows === 4 && area > 1000 && area < 100000) {
                     detectedCount++;
                     
                     let rect = cv.boundingRect(cnt);
                     let point1 = new cv.Point(rect.x, rect.y);
                     let point2 = new cv.Point(rect.x + rect.width, rect.y + rect.height);
-                    // Yeşil tespit kutusu çizimi
-                    cv.rectangle(dst, point1, point2, new cv.Scalar(0, 255, 0, 255), 3);
+                    
+                    // Kalın yeşil kutu çiz
+                    cv.rectangle(dst, point1, point2, new cv.Scalar(0, 255, 0, 255), 4);
                 }
                 approx.delete();
             }
@@ -199,6 +208,7 @@ function processVideo() {
 
     setTimeout(processFrame, 0);
 }
+
     
 </script>
 </body>
