@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    
+    <meta charset="UTF-8">
+    <!-- Mobil cihazlar için ekran ölçekleme ayarı -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mobil Kart Algılayıcı</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #111;
+            color: white;
+            text-align: center;
+            margin: 0;
+            padding: 10px;
+            /* Mobil tarayıcı kaymalarını önler */
+            overflow-x: hidden; 
+        }
+        .container {
+            width: 100%;
+            max-width: 500px;
+            margin: auto;
+            background: #222;
+            padding: 15px;
+            border-radius: 12px;
+            box-sizing: border-box;
+        }
+        h1 {
+            font-size: 1.4rem;
+            margin-top: 5px;
+        }
+        .video-container {
+            position: relative;
+            width: 100%;
+            /* Mobil dikey yerleşim için siyah arka plan */
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            /* 4:3 kamera oranını korumak için */
+            aspect-ratio: 4 / 3; 
+        }
+        video, canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        #canvasOutput {
+            z-index: 2;
+        }
+        .counter-box {
+            margin-top: 15px;
+            font-size: 1.2rem;
+            background: #333;
+            padding: 10px;
+            border-radius: 8px;
+        }
+        #cardCount {
+            color: #00ff00;
+            font-size: 1.8rem;
+            font-weight: bold;
+            display: block;
+        }
+        #status {
+            color: #ffcc00;
+            font-size: 0.9rem;
+            margin-bottom: 10px;
+        }
+    </style>
+    <!-- OpenCV.js kütüphanesi -->
+    <script async src="https://opencv.org" type="text/javascript" id="opencv-js"></script>
+</head>
+<body>
+
+<div class="container">
+    <h1>♠️ ♥️ Kart Algılayıcı ♦️ ♣️</h1>
+    <p id="status">OpenCV.js Yükleniyor...</p>
+
+    <div class="video-container">
+        <!-- Mobil için playsinline, autoplay ve muted zorunludur -->
+        <video id="videoInput" autoplay playsinline muted></video>
+        <canvas id="canvasOutput"></canvas>
+    </div>
+
+    <div class="counter-box">
+        Algılanan Kart Sayısı
+        <span id="cardCount">0</span>
+    </div>
+</div>
+
+<script>
+let video = document.getElementById('videoInput');
+let canvasOutput = document.getElementById('canvasOutput');
+let stream = null;
+
+document.getElementById('opencv-js').addEventListener('load', () => {
+    document.getElementById('status').innerText = "Kamera Başlatılıyor...";
+    startCamera();
+});
+
+function startCamera() {
+    // Mobil arka kamerayı (environment) zorunlu kılmak ve ideal çözünürlüğü ayarlamak için constraints:
+    const constraints = {
+        video: {
+            facingMode: { exact: "environment" },
+            width: { ideal: 640 },
+            height: { ideal: 480 }
+        },
+        audio: false
+    };
+
+    navigator.mediaDevices.getUserMedia(constraints)
+        .catch(err => {
+            // Eğer "exact environment" hatası alınırsa (bazı PC'lerde veya emülatörlerde arka kamera yoktur), normal kamerayı aç:
+            console.log("Arka kamera bulunamadı, varsayılan kamera açılıyor...");
+            return navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        })
+        .then(function(s) {
+            stream = s;
+            video.srcObject = stream;
+            video.play();
+            
+            // Mobil tarayıcıların video boyutlarını tam alabilmesi için loadedmetadata beklenir
+            video.onloadedmetadata = function() {
+                canvasOutput.width = video.videoWidth;
+                canvasOutput.height = video.videoHeight;
+                document.getElementById('status').innerText = "Sistem Aktif: Kartları Taratın";
+                processVideo();
+            };
+        })
+        .catch(function(err) {
+            console.error("Kamera hatası: " + err);
+            document.getElementById('status').innerText = "Kamera İzni Reddedildi veya Kamera Bulunamadı.";
+        });
+}
+
+function processVideo() {
+    if (!video.srcObject) return;
+
+    let src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+    let dst = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+    let gray = new cv.Mat();
+    let blurred = new cv.Mat();
+    let thresh = new cv.Mat();
+    let contours = new cv.MatVector();
+    let hierarchy = new cv.Mat();
+    
+    let cap = new cv.VideoCapture(video);
+    const FPS = 24; // Mobil işlemciyi yormamak ve bataryayı korumak için ideal FPS
+
+    function processFrame() {
+        try {
+            if (video.paused || video.ended) return;
+            
+            cap.read(src);
+            src.copyTo(dst);
+            
+            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+            cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
+            
+            // Mobil ortamdaki değişken ışıklar için dinamik eşikleme (Otsu) veya sabit değer
+            cv.threshold(blurred, thresh, 110, 255, cv.THRESH_BINARY);
+            
+            cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+            
+            let detectedCount = 0;
+
+            for (let i = 0; i < contours.size(); ++i) {
+                let cnt = contours.get(i);
+                let area = cv.contourArea(cnt);
+                let perimeter = cv.arcLength(cnt, true);
+                let approx = new cv.Mat();
+                cv.approxPolyDP(cnt, approx, 0.04 * perimeter, true);
+                
+                // Mobil ekranda kartların mesafesine göre alan sınırları optimize edildi
+                if (approx.rows === 4 && area > 2000 && area < 80000) {
+                    detectedCount++;
+                    
+                    let rect = cv.boundingRect(cnt);
+                    let point1 = new cv.Point(rect.x, rect.y);
+                    let point2 = new cv.Point(rect.x + rect.width, rect.y + rect.height);
+                    // Yeşil tespit kutusu çizimi
+                    cv.rectangle(dst, point1, point2, new cv.Scalar(0, 255, 0, 255), 3);
+                }
+                approx.delete();
+            }
+
+            cv.imshow('canvasOutput', dst);
+            document.getElementById('cardCount').innerText = detectedCount;
+
+            setTimeout(processFrame, 1000 / FPS);
+        } catch (err) {
+            console.error(err);
+        }
+    };
+
+    setTimeout(processFrame, 0);
+}
+    
+</script>
+</body>
+</html>
