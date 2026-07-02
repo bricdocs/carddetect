@@ -3,75 +3,77 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Kararlı Kart Algılayıcı</title>
+    <title>Briç Kart Barkod Tarayıcı</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             background-color: #144319; /* Briç masası yeşili */
             color: white;
             text-align: center;
-            margin: 0;
-            padding: 10px;
+            margin: 0; padding: 10px;
         }
         .container {
-            width: 100%;
-            max-width: 500px;
-            margin: auto;
-            background: rgba(0, 0, 0, 0.8);
-            padding: 15px;
-            border-radius: 12px;
+            width: 100%; max-width: 500px; margin: auto;
+            background: rgba(0, 0, 0, 0.85); padding: 15px; border-radius: 12px;
             box-sizing: border-box;
         }
         .video-container {
-            position: relative;
-            width: 100%;
-            background: #000;
-            border-radius: 8px;
-            overflow: hidden;
-            aspect-ratio: 4 / 3; 
+            position: relative; width: 100%; background: #000;
+            border-radius: 8px; overflow: hidden; aspect-ratio: 4 / 3; 
         }
         video, canvas {
-            position: absolute;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            object-fit: cover;
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover;
         }
         #canvasOutput { z-index: 2; }
-        .counter-box {
-            margin-top: 15px;
-            font-size: 1.2rem;
-            background: #222;
-            padding: 10px;
-            border-radius: 8px;
+        .controls { margin-top: 10px; display: flex; gap: 10px; justify-content: center; }
+        button {
+            background: #007bff; color: white; border: none; padding: 10px 15px;
+            border-radius: 6px; font-weight: bold; font-size: 0.9rem; cursor: pointer;
         }
-        #cardCount { color: #00ff00; font-size: 1.8rem; font-weight: bold; }
-        .hand-list {
-            margin-top: 12px;
-            background: #333;
-            padding: 10px;
-            border-radius: 8px;
-            font-size: 1.1rem;
+        button.danger { background: #dc3545; }
+        button.success { background: #28a745; }
+        .session-box {
+            margin-top: 15px; background: #222; padding: 12px; border-radius: 8px; text-align: left;
         }
+        .session-box h3 { margin: 0 0 8px 0; font-size: 1.1rem; color: #ffcc00; display: flex; justify-content: space-between;}
+        #savedList {
+            max-height: 150px; overflow-y: auto; padding: 0; margin: 0; list-style: none;
+        }
+        #savedList li {
+            padding: 6px; background: #333; margin-bottom: 4px; border-radius: 4px;
+            display: flex; justify-content: space-between; font-family: monospace; font-size: 1rem;
+        }
+        .delete-btn { color: #ff4444; cursor: pointer; font-weight: bold; padding: 0 5px; }
+        #status { color: #00ff00; font-size: 0.9rem; font-weight: bold; margin-bottom: 8px; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h1>♠️ ♥️ Donanımsal Kart Dedektörü ♦️ ♣️</h1>
-    <p id="status" style="color: #ffcc00;">Sistem Başlatılıyor...</p>
+    <h2>🃏 Briç Barkod Tarayıcı</h2>
+    <p id="status">Kamera Hazırlanıyor...</p>
 
     <div class="video-container">
         <video id="videoInput" autoplay playsinline muted></video>
         <canvas id="canvasOutput"></canvas>
     </div>
 
-    <div class="counter-box">
-        Algılanan Kart Sayısı: <span id="cardCount">0</span>
+    <div class="controls">
+        <button id="switchCamBtn">Kamerayı Değiştir (Arka/Ön)</button>
     </div>
 
-    <div class="hand-list">
-        <strong>Mevcut El:</strong> <br>
-        <span id="detectedHand" style="color: #00ff00;">Kart Okutulması Bekleniyor...</span>
+    <div class="session-box">
+        <h3>
+            <span>💾 Kaydedilen Kartlar (<span id="cardCount">0</span>)</span>
+            <span id="lastScanned" style="font-size:0.9rem; color:#00ff00;"></span>
+        </h3>
+        <ul id="savedList">
+            <!-- Kaydedilen kart kodları buraya eklenecek -->
+        </ul>
+        <div class="controls" style="margin-top:10px;">
+            <button class="success" id="shareBtn">Listeyi Paylaş / Yayınla</button>
+            <button class="danger" id="clearBtn">Listeyi Sıfırla</button>
+        </div>
     </div>
 </div>
 
@@ -79,36 +81,63 @@
 const video = document.getElementById('videoInput');
 const canvas = document.getElementById('canvasOutput');
 const ctx = canvas.getContext('2d');
+
 let barcodeDetector;
-let detectedCardsMap = new Map(); // Kartları ve son görülme zamanlarını tutar
+let currentStream = null;
+let currentFacingMode = "user"; // "user" = Ön Kamera, "environment" = Arka Kamera
+let savedCards = JSON.parse(localStorage.getItem('bric_cards')) || []; // Hafızadan eski kartları yükle
+let lastScannedCode = "";
+let lastScannedTime = 0;
 
 window.onload = function() {
-    // Tarayıcının yerleşik barkod/QR okuma motoru var mı kontrol et
+    // Tarayıcının yerleşik barkod okuma altyapısı var mı kontrol et
     if ('BarcodeDetector' in window) {
-        barcodeDetector = new BarcodeDetector({ formats: ['qr_code', 'code_128', 'ean_13'] });
+        // Kartlarda sık kullanılan tüm standart barkod türlerini destekle
+        barcodeDetector = new BarcodeDetector({ formats: ['code_128', 'code_39', 'qr_code', 'ean_13', 'ean_8'] });
+        updateUI();
         startCamera();
     } else {
-        document.getElementById('status').innerText = "Hata: Tarayıcınız donanımsal yapay zekayı desteklemiyor. Lütfen Chrome veya Safari'yi güncelleyin.";
+        document.getElementById('status').innerText = "Hata: Tarayıcı barkod motorunu desteklemiyor. Güncel Chrome/Safari kullanın.";
         document.getElementById('status').style.color = "#ff4444";
     }
+
+    // Buton Dinleyicileri
+    document.getElementById('switchCamBtn').onclick = switchCamera;
+    document.getElementById('clearBtn').onclick = clearList;
+    document.getElementById('shareBtn').onclick = shareList;
 };
 
 function startCamera() {
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: 640, height: 480 }, audio: false })
+    if (currentStream) {
+        currentStream.getTracks().forEach(track => track.stop());
+    }
+
+    const constraints = {
+        video: { facingMode: currentFacingMode, width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false
+    };
+
+    navigator.mediaDevices.getUserMedia(constraints)
         .then(function(stream) {
+            currentStream = stream;
             video.srcObject = stream;
             video.play();
             video.onloadedmetadata = function() {
                 canvas.width = video.videoWidth;
                 canvas.height = video.videoHeight;
-                document.getElementById('status').innerText = "Sistem Aktif: Kart Kodlarını Taratın";
-                document.getElementById('status').style.color = "#00ff00";
+                document.getElementById('status').innerText = `Sistem Aktif (${currentFacingMode === 'user' ? 'Ön Kamera' : 'Arka Kamera'})`;
                 tick();
             };
         })
         .catch(function(err) {
-            document.getElementById('status').innerText = "Kamera erişim izni reddedildi.";
+            document.getElementById('status').innerText = "Kamera erişim hatası!";
+            document.getElementById('status').style.color = "#ff4444";
         });
+}
+
+function switchCamera() {
+    currentFacingMode = (currentFacingMode === "user") ? "environment" : "user";
+    startCamera();
 }
 
 function tick() {
@@ -116,46 +145,94 @@ function tick() {
 
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // Telefonun kendi işlemcisini kullanarak görüntüyü tara (Sıfır kasma)
+    // Kılavuz Tarama Vizörü Çiz (Kartı buraya hizalayın)
+    ctx.strokeStyle = "#ffcc00";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(canvas.width * 0.15, canvas.height * 0.3, canvas.width * 0.7, canvas.height * 0.4);
+
     barcodeDetector.detect(canvas)
         .then(barcodes => {
             const now = Date.now();
-
             barcodes.forEach(barcode => {
-                // Okunan QR/Barkod değerini el listesine ekle (Örn: "Kupa As", "Sinek 10")
-                detectedCardsMap.set(barcode.rawValue, now);
+                let codeValue = barcode.rawValue.trim().toUpperCase();
 
-                // Ekranda kartın üzerine yeşil çerçeve çiz
-                const bounding = barcode.boundingBox;
+                // Çift okumayı engelleme: Aynı kart 2 saniye içinde tekrar kaydedilmez
+                if (codeValue !== lastScannedCode || (now - lastScannedTime > 2000)) {
+                    
+                    // Eğer listede bu kart zaten yoksa kaydet
+                    if (!savedCards.includes(codeValue)) {
+                        savedCards.push(codeValue);
+                        localStorage.setItem('bric_cards', JSON.stringify(savedCards));
+                        updateUI();
+                        
+                        // Son taranan bildirimi
+                        document.getElementById('lastScanned').innerText = `Son: ${codeValue} ✅`;
+                        setTimeout(() => { document.getElementById('lastScanned').innerText = ""; }, 2000);
+                    }
+
+                    lastScannedCode = codeValue;
+                    lastScannedTime = now;
+                }
+
+                // Ekranda barkodun etrafına yeşil kutu çiz
+                const b = barcode.boundingBox;
                 ctx.strokeStyle = '#00ff00';
                 ctx.lineWidth = 4;
-                ctx.strokeRect(bounding.x, bounding.y, bounding.width, bounding.height);
-                
-                ctx.fillStyle = '#00ff00';
-                ctx.font = 'bold 16px Arial';
-                ctx.fillText(barcode.rawValue, bounding.x, bounding.y - 10);
+                ctx.strokeRect(b.x, b.y, b.width, b.height);
             });
-
-            // 3 saniye boyunca kamerada görünmeyen kartları listeden temizle (Dinamik güncelleme)
-            for (let [card, lastSeen] of detectedCardsMap.entries()) {
-                if (now - lastSeen > 3000) {
-                    detectedCardsMap.delete(card);
-                }
-            }
-
-            // Arayüzü güncelle
-            document.getElementById('cardCount').innerText = detectedCardsMap.size;
-            if (detectedCardsMap.size > 0) {
-                document.getElementById('detectedHand').innerHTML = Array.from(detectedCardsMap.keys()).join('<br>');
-            } else {
-                document.getElementById('detectedHand').innerText = "Kart Okutulması Bekleniyor...";
-            }
         })
-        .catch(err => {
-            console.error("Tarama hatası:", err);
-        });
+        .catch(err => console.error("Barkod tarama hatası:", err));
 
     requestAnimationFrame(tick);
+}
+
+function updateUI() {
+    const listElement = document.getElementById('savedList');
+    listElement.innerHTML = "";
+    
+    savedCards.forEach((card, index) => {
+        const li = document.createElement('li');
+        li.innerHTML = `<span>${index + 1}. ${card}</span> <span class="delete-btn" onclick="deleteCard(${index})">❌</span>`;
+        listElement.appendChild(li);
+    });
+
+    document.getElementById('cardCount').innerText = savedCards.length;
+}
+
+function deleteCard(index) {
+    savedCards.splice(index, 1);
+    localStorage.setItem('bric_cards', JSON.stringify(savedCards));
+    updateUI();
+}
+
+function clearList() {
+    if (confirm("Tüm listeyi silmek istediğinize emin misiniz?")) {
+        savedCards = [];
+        localStorage.removeItem('bric_cards');
+        updateUI();
+        lastScannedCode = "";
+    }
+}
+
+function shareList() {
+    if (savedCards.length === 0) {
+        alert("Paylaşılacak kart yok!");
+        return;
+    }
+    
+    const textToShare = "Briç El Listesi:\n" + savedCards.join("\n");
+
+    // Telefonun kendi paylaşma menüsünü tetikle (WhatsApp, SMS, Notlar vb.)
+    if (navigator.share) {
+        navigator.share({
+            title: 'Briç Kartları',
+            text: textToShare
+        }).catch(err => console.log(err));
+    } else {
+        // Eğer tarayıcı desteklemiyorsa panoya kopyala
+        navigator.clipboard.writeText(textToShare);
+        alert("Paylaşım desteklenmiyor, liste kopyalandı:\n\n" + textToShare);
+    }
 }
 </script>
 </body>
