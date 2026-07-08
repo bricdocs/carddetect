@@ -1,1 +1,58 @@
+<!DOCTYPE html>
+<html lang="tr">
 
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Jannersten Reader</title>
+
+<link rel="stylesheet" href="style.css">
+
+</head>
+
+
+<body>
+
+<h1>Jannersten Card Reader</h1>
+
+
+<div class="camera-box">
+
+<video id="video" autoplay playsinline></video>
+
+</div>
+
+
+<canvas id="canvas"></canvas>
+
+
+<div class="panel">
+
+<div>
+Binary:
+<span id="binary">---</span>
+</div>
+
+<div>
+Decimal:
+<span id="decimal">---</span>
+</div>
+
+<div>
+Kart:
+<span id="card">Bekleniyor...</span>
+</div>
+
+</div>
+
+
+
+<script src="js/database.js"></script>
+<script src="js/camera.js"></script>
+<script src="js/app.js"></script>
+
+
+</body>
+
+</html>
